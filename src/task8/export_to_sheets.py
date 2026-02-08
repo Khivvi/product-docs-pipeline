@@ -1,5 +1,6 @@
 import os
 import datetime as dt
+from pathlib import Path
 import pandas as pd
 import psycopg2
 import gspread
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 spreadsheet_id = "1QOptHKFCY0WIp1JJ4FAXMBXr30MxqOjcs8G6jvzA2Cg"
+TASK4_SQL_PATH = Path(__file__).resolve().parents[1] / "task4" / "task4_analytics_queries.sql"
 
 def open_database_connection():
     return psycopg2.connect(
@@ -20,63 +22,29 @@ def open_database_connection():
         password=os.getenv("DB_PASSWORD"),
     )
 
-sql_queries = {
-    "source_counts": """SELECT
-        unnest(sources) AS source,
-        COUNT(*) AS doc_count
-    FROM candidate_rk_docs_master
-    GROUP BY source
-    ORDER BY doc_count DESC, source;
-    """,
+def load_sql_queries(sql_file: Path) -> dict[str, str]:
+    queries = {}
+    current_name = None
+    current_lines = []
 
-    "monthly_distribution": """SELECT
-        DATE_TRUNC('month', first_seen_at) AS month,
-        COUNT(*) AS doc_count
-    FROM candidate_rk_docs_master
-    WHERE first_seen_at >= CURRENT_DATE - INTERVAL '12 months'
-    GROUP BY month
-    ORDER BY month;
-    """,
+    for raw_line in sql_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("-- name:"):
+            if current_name and current_lines:
+                queries[current_name] = "\n".join(current_lines).strip()
+            current_name = line.split(":", 1)[1].strip()
+            current_lines = []
+            continue
+        if current_name:
+            current_lines.append(raw_line)
 
-    "success_rate": """SELECT
-        src.source,
-        COUNT(*) FILTER (WHERE dc.status_code = 200) * 1.0 / NULLIF(COUNT(*), 0) AS success_rate
-    FROM candidate_rk_docs_master dm
-    CROSS JOIN LATERAL unnest(dm.sources) AS src(source)
-    LEFT JOIN candidate_rk_document_content dc
-        ON dm.url = dc.url
-    GROUP BY src.source
-    ORDER BY success_rate DESC, src.source;
-    """,
+    if current_name and current_lines:
+        queries[current_name] = "\n".join(current_lines).strip()
 
-    "top_paths": """SELECT
-        split_part(
-            regexp_replace(url, '^https?://[^/]+/(en|de|fr|ja|ko|pt)/', ''),
-            '/',
-            1
-        ) AS path_segment,
-        COUNT(*) AS freq
-    FROM candidate_rk_docs_master
-    GROUP BY path_segment
-    ORDER BY freq DESC, path_segment
-    LIMIT 10;
-    """,
+    if not queries:
+        raise ValueError(f"No SQL queries found in {sql_file}")
 
-    "stale_docs": """SELECT
-        stale.stale_count,
-        CASE
-            WHEN total.total_count = 0 THEN 0
-            ELSE stale.stale_count * 100.0 / total.total_count
-        END AS stale_percentage
-    FROM
-        (SELECT COUNT(*) AS stale_count
-         FROM candidate_rk_docs_master
-         WHERE first_seen_at < CURRENT_DATE - INTERVAL '180 days') stale
-    CROSS JOIN
-        (SELECT COUNT(*) AS total_count
-         FROM candidate_rk_docs_master) total;
-    """
-}
+    return queries
 
 def run_query(sql_query: str) -> pd.DataFrame:
     with open_database_connection() as connection:
@@ -129,6 +97,7 @@ def write_dataframe(sheet, tab_name: str, dataframe: pd.DataFrame):
     worksheet.update(values)
 
 def main():
+    sql_queries = load_sql_queries(TASK4_SQL_PATH)
     sheet = open_google_sheet()
 
     for tab_name, sql_query in sql_queries.items():
