@@ -1,5 +1,4 @@
 from unittest.mock import MagicMock, patch
-
 from pipeline.ingest import run_content_ingest
 
 

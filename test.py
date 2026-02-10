@@ -3,3 +3,5 @@ u = "https://docs.snowflake.com/en/migrations/snowconvert-docs/translation-refer
 for ua in ["rk-doc-ingestor/1.0", "Mozilla/5.0"]:
     r = requests.get(u, headers={"User-Agent": ua}, timeout=30, allow_redirects=True)
     print(ua, r.status_code, r.url)
+
+#faced an issue with data extraction so here I was just testing a few things
